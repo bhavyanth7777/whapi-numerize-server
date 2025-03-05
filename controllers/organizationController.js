@@ -87,7 +87,8 @@ exports.deleteOrganization = async (req, res) => {
             { $unset: { organization: 1 } }
         );
 
-        await organization.remove();
+        // Replace the deprecated organization.remove() with:
+        await Organization.deleteOne({ _id: organization._id });
 
         res.status(200).json({ message: 'Organization deleted successfully' });
     } catch (error) {
