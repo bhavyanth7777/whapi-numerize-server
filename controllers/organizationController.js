@@ -1,5 +1,6 @@
 const Organization = require('../models/Organization');
 const Chat = require('../models/Chat');
+const whapiService = require('../services/whapiService');
 
 // Get all organizations
 exports.getAllOrganizations = async (req, res) => {
@@ -113,18 +114,7 @@ exports.addChatToOrganization = async (req, res) => {
         let chat = await Chat.findOne({ chatId });
 
         if (!chat) {
-            // Get chat from Whapi and create it
-            const whapiChat = await whapiService.getChatInfo(chatId);
-
-            chat = new Chat({
-                chatId: whapiChat.id,
-                name: whapiChat.name || whapiChat.subject || `Chat with ${whapiChat.id}`,
-                isGroup: whapiChat.isGroup || false,
-                participants: whapiChat.participants || [],
-                profilePicture: whapiChat.profilePictureUrl || ''
-            });
-
-            await chat.save();
+            return res.status(404).json({ message: 'Chat not found in database' });
         }
 
         // Update chat's organization
