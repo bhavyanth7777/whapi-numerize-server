@@ -75,6 +75,7 @@ exports.updateOrganization = async (req, res) => {
 
 // Delete organization
 exports.deleteOrganization = async (req, res) => {
+    console.log('delete organization triggered');
     try {
         const organization = await Organization.findById(req.params.id);
 
@@ -101,35 +102,32 @@ exports.deleteOrganization = async (req, res) => {
 // Add chat to organization
 exports.addChatToOrganization = async (req, res) => {
     try {
-        const { organizationId, chatId } = req.params;
+        const { id, chatId } = req.params;
+
+        // Decode the chatId parameter to handle special characters
+        const decodedChatId = decodeURIComponent(chatId);
 
         // Find organization
-        const organization = await Organization.findById(organizationId);
+        const organization = await Organization.findById(id);
 
         if (!organization) {
             return res.status(404).json({ message: 'Organization not found' });
         }
 
-        // Find chat
-        let chat = await Chat.findOne({ chatId });
-
-        if (!chat) {
-            return res.status(404).json({ message: 'Chat not found in database' });
+        // Initialize chatIds array if it doesn't exist yet
+        if (!organization.chatIds) {
+            organization.chatIds = [];
         }
 
-        // Update chat's organization
-        chat.organization = organization._id;
-        await chat.save();
-
-        // Add chat to organization if not already present
-        if (!organization.chats.includes(chat._id)) {
-            organization.chats.push(chat._id);
+        // Add chat ID to organization if not already present
+        if (!organization.chatIds.includes(decodedChatId)) {
+            organization.chatIds.push(decodedChatId);
             await organization.save();
         }
 
         res.status(200).json(organization);
     } catch (error) {
-        console.error(`Error in addChatToOrganization for org ${req.params.organizationId} and chat ${req.params.chatId}:`, error);
+        console.error(`Error in addChatToOrganization for org ${req.params.id} and chat ${req.params.chatId}:`, error);
         res.status(500).json({ message: error.message });
     }
 };
@@ -137,34 +135,28 @@ exports.addChatToOrganization = async (req, res) => {
 // Remove chat from organization
 exports.removeChatFromOrganization = async (req, res) => {
     try {
-        const { organizationId, chatId } = req.params;
+        const { id, chatId } = req.params;
+
+        // Decode the chatId parameter
+        const decodedChatId = decodeURIComponent(chatId);
 
         // Find organization
-        const organization = await Organization.findById(organizationId);
+        const organization = await Organization.findById(id);
 
         if (!organization) {
             return res.status(404).json({ message: 'Organization not found' });
         }
 
-        // Find chat
-        const chat = await Chat.findOne({ chatId });
-
-        if (chat) {
-            // Remove organization from chat
-            chat.organization = null;
-            await chat.save();
-
-            // Remove chat from organization
-            organization.chats = organization.chats.filter(
-                chatId => !chatId.equals(chat._id)
-            );
-
-            await organization.save();
+        // Remove chat ID from organization
+        if (organization.chatIds) {
+            organization.chatIds = organization.chatIds.filter(id => id !== decodedChatId);
         }
+
+        await organization.save();
 
         res.status(200).json(organization);
     } catch (error) {
-        console.error(`Error in removeChatFromOrganization for org ${req.params.organizationId} and chat ${req.params.chatId}:`, error);
+        console.error(`Error in removeChatFromOrganization for org ${req.params.id} and chat ${req.params.chatId}:`, error);
         res.status(500).json({ message: error.message });
     }
 };

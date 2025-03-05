@@ -1,3 +1,4 @@
+// server/models/Organization.js
 const mongoose = require('mongoose');
 
 const organizationSchema = new mongoose.Schema({
@@ -8,9 +9,12 @@ const organizationSchema = new mongoose.Schema({
     description: {
         type: String
     },
-    chats: [{
+    chats: [{ // Keep original field for backward compatibility
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Chat'
+    }],
+    chatIds: [{ // New field to store chat IDs directly
+        type: String
     }],
     createdAt: {
         type: Date,
