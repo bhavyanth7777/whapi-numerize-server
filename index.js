@@ -6,9 +6,17 @@ const dotenv = require('dotenv');
 const mongoose = require('mongoose');
 const http = require('http');
 const { Server } = require('socket.io');
+const fs = require('fs');
+const path = require('path');
 
 // Load environment variables
 dotenv.config();
+
+// Create media directory if it doesn't exist
+const mediaDir = path.join(__dirname, 'media');
+if (!fs.existsSync(mediaDir)) {
+    fs.mkdirSync(mediaDir, { recursive: true });
+}
 
 // Create Express app and server
 const app = express();
@@ -512,6 +520,52 @@ app.get('/api/messages/:chatId', async (req, res) => {
     } catch (error) {
         console.error(`Error getting messages for chat ${req.params.chatId}:`, error);
         res.status(500).json({ message: 'Failed to get messages' });
+    }
+});
+
+// Media Routes
+// Media download endpoint
+app.get('/api/media/:mediaId', async (req, res) => {
+    const { mediaId } = req.params;
+
+    try {
+        // Check if we already have this file cached
+        const mediaPath = path.join(mediaDir, mediaId);
+
+        // If file exists locally, serve it
+        if (fs.existsSync(mediaPath)) {
+            // For local files, we need to guess the content type
+            let contentType = 'application/octet-stream';
+
+            // Read the file and send it
+            const fileData = fs.readFileSync(mediaPath);
+            res.setHeader('Content-Type', contentType);
+            return res.send(fileData);
+        }
+
+        // Otherwise, fetch from Whapi
+        const response = await axios.get(`${WHAPI_BASE_URL}/media/${mediaId}`, {
+            headers: {
+                'Authorization': `Bearer ${WHAPI_TOKEN}`
+            },
+            responseType: 'arraybuffer'
+        });
+
+        // Save to local file system
+        fs.writeFileSync(mediaPath, Buffer.from(response.data));
+
+        // Set response headers
+        if (response.headers['content-type']) {
+            res.setHeader('Content-Type', response.headers['content-type']);
+        }
+
+        // Send response
+        res.send(response.data);
+    } catch (error) {
+        console.error(`Error fetching media ${mediaId}:`, error);
+        res.status(500).json({
+            message: 'Failed to fetch media'
+        });
     }
 });
 
