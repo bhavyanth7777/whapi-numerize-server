@@ -8,6 +8,9 @@ const http = require('http');
 const { Server } = require('socket.io');
 const fs = require('fs');
 const path = require('path');
+const { DocumentProcessorServiceClient } = require('@google-cloud/documentai');
+const { Storage } = require('@google-cloud/storage');
+const multer = require('multer');
 
 // Load environment variables
 dotenv.config();
@@ -180,6 +183,71 @@ const whapiRequest = async (endpoint, method = 'get', data = null) => {
         return response.data;
     } catch (error) {
         console.error(`Whapi API Error (${endpoint}):`, error.response?.data || error.message);
+        throw error;
+    }
+};
+
+// Google Document AI processing utility
+const processDocumentWithAI = async (fileBuffer, fileName) => {
+    try {
+        const projectId = process.env.DOCUMENT_AI_PROJECT_ID;
+        const location = process.env.DOCUMENT_AI_LOCATION;
+        const processorId = process.env.DOCUMENT_AI_PROCESSOR_ID;
+
+        const documentaiClient = new DocumentProcessorServiceClient();
+        const name = `projects/${projectId}/locations/${location}/processors/${processorId}`;
+
+        // Get file MIME type based on extension
+        const getFileMimeType = (filename) => {
+            const extension = path.extname(filename).toLowerCase();
+            switch (extension) {
+                case '.pdf': return 'application/pdf';
+                case '.jpg':
+                case '.jpeg': return 'image/jpeg';
+                case '.png': return 'image/png';
+                case '.tiff': return 'image/tiff';
+                case '.gif': return 'image/gif';
+                case '.bmp': return 'image/bmp';
+                default: return 'application/octet-stream';
+            }
+        };
+
+        const mimeType = getFileMimeType(fileName);
+        
+        // Process the document
+        const [result] = await documentaiClient.processDocument({
+            name,
+            rawDocument: {
+                content: fileBuffer,
+                mimeType: mimeType,
+            }
+        });
+
+        const document = result.document;
+        
+        // Create a structured object from the parsed entities
+        const parsedData = {};
+        
+        if (document.entities && document.entities.length > 0) {
+            document.entities.forEach(entity => {
+                if (entity.type && entity.mentionText) {
+                    parsedData[entity.type] = entity.mentionText;
+                }
+            });
+        }
+        
+        // Include raw text from the document in case it's needed
+        const rawText = document.text;
+        
+        return {
+            parsedData,
+            rawText,
+            confidence: document.textStyles?.length 
+                ? document.textStyles.reduce((sum, style) => sum + style.confidence, 0) / document.textStyles.length 
+                : null
+        };
+    } catch (error) {
+        console.error('Document AI processing error:', error);
         throw error;
     }
 };
@@ -672,10 +740,10 @@ app.post('/api/system/info/update', async (req, res) => {
     }
 });
 
-/* Document routes
+// Documents Routes
 app.get('/api/documents', async (req, res) => {
     try {
-        const documents = await Document.find();
+        const documents = await Document.find().sort({ processedAt: -1 });
         res.status(200).json(documents);
     } catch (error) {
         console.error('Error getting documents:', error);
@@ -708,7 +776,65 @@ app.get('/api/documents/chat/:chatId', async (req, res) => {
     }
 });
 
- */
+// Route to process and analyze a document with Document AI
+app.post('/api/documents/analyze/:fileId', async (req, res) => {
+    try {
+        const { fileId } = req.params;
+        if (!fileId) {
+            return res.status(400).json({ message: 'File ID is required' });
+        }
+
+        // Download the file from WHAPI
+        const fileResponse = await axios({
+            method: 'get',
+            url: `${WHAPI_BASE_URL}/media/${fileId}`,
+            headers: {
+                'Authorization': `Bearer ${WHAPI_TOKEN}`
+            },
+            responseType: 'arraybuffer'
+        });
+
+        // Get file name from headers or use a default
+        const contentDisposition = fileResponse.headers['content-disposition'];
+        let fileName = 'document';
+        if (contentDisposition) {
+            const fileNameMatch = contentDisposition.match(/filename="(.+)"/);
+            if (fileNameMatch) {
+                fileName = fileNameMatch[1];
+            }
+        }
+        
+        // Add an extension based on content type if not present
+        const contentType = fileResponse.headers['content-type'];
+        if (!fileName.includes('.')) {
+            if (contentType.includes('pdf')) {
+                fileName += '.pdf';
+            } else if (contentType.includes('jpeg') || contentType.includes('jpg')) {
+                fileName += '.jpg';
+            } else if (contentType.includes('png')) {
+                fileName += '.png';
+            }
+        }
+
+        // Process the document with Google Document AI
+        const documentAIResult = await processDocumentWithAI(fileResponse.data, fileName);
+
+        // Return the processing results
+        res.status(200).json({
+            fileName,
+            mimeType: contentType,
+            parsedData: documentAIResult.parsedData,
+            rawText: documentAIResult.rawText,
+            confidence: documentAIResult.confidence
+        });
+    } catch (error) {
+        console.error('Error analyzing document:', error);
+        res.status(500).json({ 
+            message: 'Failed to analyze document',
+            error: error.message 
+        });
+    }
+});
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
